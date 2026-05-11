@@ -110,7 +110,7 @@ Run once locally to populate the DB. Not part of the app.
 
 ## Milestones
 
-- [ ] **Milestone 1 — Project scaffold**
+- [x] **Milestone 1 — Project scaffold**
   - Next.js project init
   - Neon DB provisioned, pgvector enabled
   - Drizzle schema + migration run
