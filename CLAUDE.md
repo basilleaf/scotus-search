@@ -1,6 +1,7 @@
 # SCOTUS Semantic Search — Project Context
 
 A Next.js RAG app that lets you search Supreme Court opinions by concept and legal meaning, not just keywords. Two core use cases:
+
 1. "Find cases similar to this legal situation" (vector similarity)
 2. "What has SCOTUS said about X across history" (RAG synthesis with citations)
 
@@ -25,6 +26,7 @@ A Next.js RAG app that lets you search Supreme Court opinions by concept and leg
 CourtListener bulk data: https://www.courtlistener.com/help/api/bulk-data/
 
 Three CSVs needed:
+
 - `dockets.csv` — case name, docket number
 - `opinion-clusters.csv` — groups opinions per case, holds metadata (date, court, justices)
 - `opinions.csv` — actual text with `type` field (majority/concurrence/dissent)
@@ -66,6 +68,7 @@ CREATE INDEX ON opinion_chunks
 ```
 
 **Key decisions:**
+
 - No raw full-text stored — chunks only
 - `opinion_type` on each chunk enables filtering by majority/dissent
 - ivfflat index for fast cosine similarity search
@@ -122,7 +125,7 @@ Run once locally to populate the DB. Not part of the app.
   - Test on 1950s cases only (~100 cases) before full run
   - Verify chunks + embeddings land in DB correctly
 
-- [ ] **Milestone 3 — Full ingestion**
+- [] **Milestone 3 — Full ingestion**
   - Run ingest for all post-1950 SCOTUS opinions
   - Confirm resumability works
   - Spot-check data quality (chunk lengths, opinion_type tagging)
