@@ -9,7 +9,8 @@
     "lint": "eslint",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "ingest": "tsx scripts/ingest.ts"
+    "ingest": "tsx scripts/ingest.ts",
+    "ingest:api": "tsx scripts/ingest-api.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
