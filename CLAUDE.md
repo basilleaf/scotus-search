@@ -116,7 +116,7 @@ Run once locally to populate the DB. Not part of the app.
   - Drizzle schema + migration run
   - Env vars configured (Neon, Voyage AI, Anthropic)
 
-- [ ] **Milestone 2 — Ingestion script (small slice)**
+- [x] **Milestone 2 — Ingestion script (small slice)**
   - Download CourtListener CSVs
   - Write `scripts/ingest.ts`
   - Test on 1950s cases only (~100 cases) before full run
