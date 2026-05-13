@@ -135,7 +135,7 @@ Run once locally to populate the DB. Not part of the app.
   - Return top N chunks with case metadata
   - Basic UI: search box → results list with case name, year, citation, opinion type, excerpt
 
-- [ ] **Milestone 5 — RAG synthesis**
+- [x] **Milestone 5 — RAG synthesis**
   - `/api/ask` route: retrieve top chunks, pass to Claude with prompt
   - Claude synthesizes an answer with inline citations
   - UI: conversational answer above source cards

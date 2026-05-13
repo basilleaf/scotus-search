@@ -13,6 +13,7 @@
     "ingest:api": "tsx scripts/ingest-api.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.96.0",
     "@neondatabase/serverless": "^1.1.0",
     "drizzle-orm": "^0.45.2",
     "next": "16.2.6",
