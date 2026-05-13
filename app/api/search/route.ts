@@ -34,38 +34,48 @@ export async function GET(req: NextRequest) {
     const embedding = await embedQuery(query.trim());
     const vectorStr = `[${embedding.join(',')}]`;
 
+    const MIN_SIMILARITY = 0.30;
+
     const rows = opinionType
       ? await sql`
-          SELECT
-            oc.id,
-            oc.case_id,
-            oc.opinion_type,
-            oc.chunk_text,
-            1 - (oc.embedding <=> ${vectorStr}::vector) AS similarity,
-            c.name,
-            c.citation,
-            c.year,
-            c.judges
-          FROM opinion_chunks oc
-          JOIN cases c ON oc.case_id = c.id
-          WHERE oc.opinion_type = ${opinionType}
-          ORDER BY oc.embedding <=> ${vectorStr}::vector
+          SELECT * FROM (
+            SELECT DISTINCT ON (oc.case_id, oc.opinion_type)
+              oc.id,
+              oc.case_id,
+              oc.opinion_type,
+              oc.chunk_text,
+              1 - (oc.embedding <=> ${vectorStr}::vector) AS similarity,
+              c.name,
+              c.citation,
+              c.year,
+              c.judges
+            FROM opinion_chunks oc
+            JOIN cases c ON oc.case_id = c.id
+            WHERE oc.opinion_type = ${opinionType}
+            ORDER BY oc.case_id, oc.opinion_type, oc.embedding <=> ${vectorStr}::vector
+          ) sub
+          WHERE similarity >= ${MIN_SIMILARITY}
+          ORDER BY similarity DESC
           LIMIT 15
         `
       : await sql`
-          SELECT
-            oc.id,
-            oc.case_id,
-            oc.opinion_type,
-            oc.chunk_text,
-            1 - (oc.embedding <=> ${vectorStr}::vector) AS similarity,
-            c.name,
-            c.citation,
-            c.year,
-            c.judges
-          FROM opinion_chunks oc
-          JOIN cases c ON oc.case_id = c.id
-          ORDER BY oc.embedding <=> ${vectorStr}::vector
+          SELECT * FROM (
+            SELECT DISTINCT ON (oc.case_id, oc.opinion_type)
+              oc.id,
+              oc.case_id,
+              oc.opinion_type,
+              oc.chunk_text,
+              1 - (oc.embedding <=> ${vectorStr}::vector) AS similarity,
+              c.name,
+              c.citation,
+              c.year,
+              c.judges
+            FROM opinion_chunks oc
+            JOIN cases c ON oc.case_id = c.id
+            ORDER BY oc.case_id, oc.opinion_type, oc.embedding <=> ${vectorStr}::vector
+          ) sub
+          WHERE similarity >= ${MIN_SIMILARITY}
+          ORDER BY similarity DESC
           LIMIT 15
         `;
 

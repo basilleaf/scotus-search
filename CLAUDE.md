@@ -130,7 +130,7 @@ Run once locally to populate the DB. Not part of the app.
   - Confirm resumability works
   - Spot-check data quality (chunk lengths, opinion_type tagging)
 
-- [ ] **Milestone 4 — Similarity search**
+- [x] **Milestone 4 — Similarity search**
   - `/api/search` route: embed query via Voyage AI, cosine similarity against `opinion_chunks`
   - Return top N chunks with case metadata
   - Basic UI: search box → results list with case name, year, citation, opinion type, excerpt
