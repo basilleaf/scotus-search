@@ -17,7 +17,6 @@
  */
 
 import "dotenv/config";
-import { spawnSync } from "node:child_process";
 import { neon } from "@neondatabase/serverless";
 
 // ---------------------------------------------------------------------------
@@ -27,7 +26,7 @@ import { neon } from "@neondatabase/serverless";
 const sql = neon(process.env.DATABASE_URL_UNPOOLED!);
 const CL_TOKEN = process.env.COURTLISTENER_TOKEN;
 const CL_BASE = "https://www.courtlistener.com/api/rest/v4";
-const PAGE_SIZE = 100;
+const PAGE_SIZE = 20;
 
 const args = process.argv.slice(2);
 const startIdx = args.indexOf("--start");
@@ -104,26 +103,13 @@ function chunkText(text: string): string[] {
 }
 
 async function clFetch<T>(url: string, retries = 3): Promise<T> {
-  const curlArgs = [
-    "-s",
-    "--max-time",
-    "120",
-    "-H",
-    "Accept: application/json",
-  ];
-  if (CL_TOKEN) curlArgs.push("-H", `Authorization: Token ${CL_TOKEN}`);
-  curlArgs.push(url);
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (CL_TOKEN) headers["Authorization"] = `Token ${CL_TOKEN}`;
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      const result = spawnSync("curl", curlArgs, {
-        encoding: "utf8",
-        timeout: 130000,
-      });
-      if (result.error) throw result.error;
-      if (result.status !== 0)
-        throw new Error(`curl exit ${result.status}: ${result.stderr}`);
-      const parsed = JSON.parse(result.stdout) as any;
+      const res = await fetch(url, { headers });
+      const parsed = (await res.json()) as any;
       if (parsed?.detail) throw new Error(`CourtListener: ${parsed.detail}`);
       return parsed as T;
     } catch (err: any) {
@@ -219,7 +205,6 @@ async function main() {
   // Stream opinions directly — far fewer API calls than cluster → sub_opinion URL fetches
   const opinionParams: Record<string, string> = {
     cluster__docket__court: "scotus",
-    ordering: "-cluster__date_filed",
   };
   if (startYear > 1900)
     opinionParams["cluster__date_filed__gte"] = `${startYear}-01-01`;
