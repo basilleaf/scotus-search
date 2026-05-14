@@ -17,6 +17,10 @@
  */
 
 import "dotenv/config";
+import { spawnSync } from "node:child_process";
+import { unlinkSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { neon } from "@neondatabase/serverless";
 
 // ---------------------------------------------------------------------------
@@ -26,7 +30,7 @@ import { neon } from "@neondatabase/serverless";
 const sql = neon(process.env.DATABASE_URL_UNPOOLED!);
 const CL_TOKEN = process.env.COURTLISTENER_TOKEN;
 const CL_BASE = "https://www.courtlistener.com/api/rest/v4";
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 10;
 
 const args = process.argv.slice(2);
 const startIdx = args.indexOf("--start");
@@ -54,8 +58,6 @@ type CLOpinion = {
   cluster: string; // URL like ".../clusters/12345/"
   type: string; // "020lead", "040dissent", etc.
   plain_text: string;
-  html_with_citations: string;
-  html: string;
 };
 
 type CLCluster = {
@@ -103,19 +105,27 @@ function chunkText(text: string): string[] {
 }
 
 async function clFetch<T>(url: string, retries = 3): Promise<T> {
-  const headers: Record<string, string> = { Accept: "application/json" };
-  if (CL_TOKEN) headers["Authorization"] = `Token ${CL_TOKEN}`;
+  const curlHeaders = ["-H", "Accept: application/json"];
+  if (CL_TOKEN) curlHeaders.push("-H", `Authorization: Token ${CL_TOKEN}`);
 
   for (let attempt = 1; attempt <= retries; attempt++) {
+    const tmp = join(tmpdir(), `cl-${Date.now()}.json`);
     try {
-      const res = await fetch(url, { headers });
-      const parsed = (await res.json()) as any;
+      const result = spawnSync(
+        "curl",
+        ["--max-time", "300", "-o", tmp, "-w", "%{http_code}", ...curlHeaders, url],
+        { encoding: "utf8", timeout: 360_000 },
+      );
+      if (result.error) throw result.error;
+      const status = parseInt(result.stdout, 10);
+      if (isNaN(status) || status === 0) throw new Error(`curl exit ${result.status}, stdout="${result.stdout}", stderr="${result.stderr}"`);
+      const body = readFileSync(tmp, "utf8");
+      const parsed = JSON.parse(body) as any;
       if (parsed?.detail) throw new Error(`CourtListener: ${parsed.detail}`);
       return parsed as T;
     } catch (err: any) {
-      const msg = String(err).slice(0, 300);
-      const isRateLimit =
-        msg.includes("throttled") || msg.includes("Rate limit");
+      const msg = String(err).slice(0, 400);
+      const isRateLimit = msg.includes("throttled") || msg.includes("Rate limit");
       const delay = isRateLimit ? 60000 : attempt * 5000;
       console.log(`  CL error (attempt ${attempt}): ${msg}`);
       if (attempt < retries) {
@@ -124,6 +134,8 @@ async function clFetch<T>(url: string, retries = 3): Promise<T> {
       } else {
         throw new Error(`CourtListener fetch failed: ${url}\n${err}`);
       }
+    } finally {
+      try { unlinkSync(tmp); } catch {}
     }
   }
   throw new Error(`CourtListener: max retries exceeded for ${url}`);
@@ -133,12 +145,24 @@ async function* paginate<T>(
   endpoint: string,
   params: Record<string, string>,
 ): AsyncGenerator<T> {
-  const qs = new URLSearchParams({ ...params, page_size: String(PAGE_SIZE) });
-  let url: string | null = `${CL_BASE}${endpoint}?${qs}`;
+  // Build fields suffix raw (not URLSearchParams — it encodes commas as %2C)
+  const fields = params.fields;
+  const otherParams = Object.fromEntries(
+    Object.entries(params).filter(([k]) => k !== "fields"),
+  );
+  const qs = new URLSearchParams({ ...otherParams, page_size: String(PAGE_SIZE) });
+  const fieldsSuffix = fields ? `&fields=${fields}` : "";
+
+  let url: string | null = `${CL_BASE}${endpoint}?${qs}${fieldsSuffix}`;
   while (url) {
     const page = await clFetch<CLPage<T>>(url);
     for (const item of page.results) yield item;
-    url = page.next;
+    // CourtListener's next URL omits fields — re-append it
+    url = page.next
+      ? page.next.includes("fields=")
+        ? page.next
+        : `${page.next}${fieldsSuffix}`
+      : null;
     if (url) await new Promise((r) => setTimeout(r, 500));
   }
 }
@@ -205,6 +229,7 @@ async function main() {
   // Stream opinions directly — far fewer API calls than cluster → sub_opinion URL fetches
   const opinionParams: Record<string, string> = {
     cluster__docket__court: "scotus",
+    fields: "id,cluster,type,plain_text",
   };
   if (startYear > 1900)
     opinionParams["cluster__date_filed__gte"] = `${startYear}-01-01`;
@@ -238,12 +263,7 @@ async function main() {
       }
 
       // Filter by text length before fetching cluster metadata
-      const raw =
-        opinion.plain_text || opinion.html_with_citations || opinion.html || "";
-      const text = raw
-        .replace(/<[^>]+>/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
+      const text = (opinion.plain_text ?? "").replace(/\s+/g, " ").trim();
       if (text.length < MIN_TEXT_CHARS) {
         skipped++;
         continue;
@@ -283,15 +303,13 @@ async function main() {
         for (let i = 0; i < chunks.length; i += VOYAGE_BATCH) {
           const batch = chunks.slice(i, i + VOYAGE_BATCH);
           const embeddings = await embedBatch(batch);
-          await Promise.all(
-            batch.map((chunk, j) => {
-              const vec = `[${embeddings[j].join(",")}]`;
-              return sql`
-                INSERT INTO opinion_chunks (case_id, opinion_type, chunk_index, chunk_text, embedding)
-                VALUES (${clusterId}, ${opinionType}, ${i + j}, ${chunk}, ${vec}::vector)
-              `;
-            }),
-          );
+          for (let j = 0; j < batch.length; j++) {
+            const vec = `[${embeddings[j].join(",")}]`;
+            await sql`
+              INSERT INTO opinion_chunks (case_id, opinion_type, chunk_index, chunk_text, embedding)
+              VALUES (${clusterId}, ${opinionType}, ${i + j}, ${batch[j]}, ${vec}::vector)
+            `;
+          }
         }
 
         processedKeys.add(key);

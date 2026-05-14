@@ -119,8 +119,9 @@ const CSV_OPTS = {
   skip_empty_lines: true,
   bom: true,
   relax_column_count: true,
-  relax_quotes: true,       // CourtListener CSVs have unescaped quotes in case names
+  relax_quotes: true,
   quote: '"' as const,
+  escape: '\\' as const,   // CourtListener uses \" not "" for quote escaping
 };
 
 async function streamCsv(
@@ -128,8 +129,16 @@ async function streamCsv(
   onRow: (row: Record<string, string>) => Promise<void>
 ): Promise<void> {
   const parser = createReadStream(path).pipe(parse(CSV_OPTS));
-  for await (const row of parser) {
-    await onRow(row as Record<string, string>);
+  try {
+    for await (const row of parser) {
+      await onRow(row as Record<string, string>);
+    }
+  } catch (err: any) {
+    if (err?.code === 'CSV_QUOTE_NOT_CLOSED') {
+      console.warn('  Warning: CSV ended with unclosed quote — treating as end of stream');
+    } else {
+      throw err;
+    }
   }
 }
 
@@ -158,6 +167,9 @@ async function streamCsvFromS3(
     for await (const row of parser) {
       await onRow(row as Record<string, string>);
     }
+  } catch (err: any) {
+    if (err?.code !== 'CSV_QUOTE_NOT_CLOSED') throw err;
+    console.warn('  Warning: CSV ended with unclosed quote — treating as end of stream');
   } finally {
     curl.kill();
     bzip2.kill();
@@ -228,8 +240,8 @@ async function main() {
   const opinionsLocal = existsSync(`${DATA_DIR}/opinions.csv`);
   console.log(`\n[4/4] Processing opinions — ${opinionsLocal ? 'local file' : 'streaming from S3'}...\n`);
   let done = 0;
-  let skipped = 0;
   let errors = 0;
+  const skipped = { alreadyDone: 0, noText: 0, unknownType: 0 };
 
   const streamOpinions = stream('opinions.csv', OPINIONS_URL);
 
@@ -245,14 +257,14 @@ async function main() {
     }
 
     const opinionType = normalizeOpinionType(row.type);
-    if (!opinionType) return;
+    if (!opinionType) { skipped.unknownType++; return; }
 
     const chunkKey = `${clusterId}:${opinionType}`;
-    if (processedChunkKeys.has(chunkKey)) { skipped++; return; }
+    if (processedChunkKeys.has(chunkKey)) { skipped.alreadyDone++; return; }
 
-    const raw = row.plain_text || row.html_with_citations || row.html || '';
+    const raw = row.plain_text || row.html_with_citations || row.html_columbia || row.xml_harvard || row.html || '';
     const text = raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-    if (text.length < 100) { skipped++; return; }
+    if (text.length < 100) { skipped.noText++; return; }
 
     try {
       // Upsert case record (once per case_id)
@@ -280,15 +292,13 @@ async function main() {
         const batch = chunks.slice(i, i + VOYAGE_BATCH);
         const embeddings = await embedBatch(batch);
 
-        await Promise.all(
-          batch.map((chunk, j) => {
-            const vec = `[${embeddings[j].join(',')}]`;
-            return sql`
-              INSERT INTO opinion_chunks (case_id, opinion_type, chunk_index, chunk_text, embedding)
-              VALUES (${clusterId}, ${opinionType}, ${i + j}, ${chunk}, ${vec}::vector)
-            `;
-          })
-        );
+        for (let j = 0; j < batch.length; j++) {
+          const vec = `[${embeddings[j].join(',')}]`;
+          await sql`
+            INSERT INTO opinion_chunks (case_id, opinion_type, chunk_index, chunk_text, embedding)
+            VALUES (${clusterId}, ${opinionType}, ${i + j}, ${batch[j]}, ${vec}::vector)
+          `;
+        }
       }
 
       processedChunkKeys.add(chunkKey);
@@ -306,7 +316,8 @@ async function main() {
     console.log(`\nLimit of ${LIMIT} reached — stopping early.`);
   }
 
-  console.log(`\nDone.  Processed: ${done}  Skipped: ${skipped}  Errors: ${errors}`);
+  const totalSkipped = skipped.alreadyDone + skipped.noText + skipped.unknownType;
+  console.log(`\nDone.  Processed: ${done}  Skipped: ${totalSkipped} (${skipped.alreadyDone} already done, ${skipped.noText} no text, ${skipped.unknownType} unknown type)  Errors: ${errors}`);
 }
 
 main().catch(console.error);
